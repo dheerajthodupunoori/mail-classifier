@@ -1,0 +1,5 @@
+Mail clasifier:-
+
+1. Fetch gmails from google post the given time stamp
+2. Classify the mails into categories - LLM can be used here for categorization
+3. Delete mail based on user confirmation
