@@ -1,10 +1,6 @@
+"""Entrypoint for the Gmail read node."""
 
-
-from datetime import datetime
-
-from mail_classifier.nodes.read_mails.gmail_authenticate import authenticate
-from mail_classifier.nodes.read_mails.read_mails import read_messages
-from read_mails import main
+from mail_classifier.nodes.read_mails.read_mails import main
 
 
 def read_mails_node():
