@@ -1,4 +1,3 @@
-import os.path
 import datetime
 
 from googleapiclient.discovery import build
@@ -15,7 +14,7 @@ def main():
     print(f"An error occurred: {error}")
 
 
-def read_messages(timestamp: datetime, creds) -> list:
+def read_messages(timestamp: datetime.datetime, creds) -> list[dict]:
   """Reads messages from Gmail after a certain timestamp."""
   try:
     # Call the Gmail API
