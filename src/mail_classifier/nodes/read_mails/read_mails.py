@@ -1,82 +1,311 @@
+# import datetime
+
+# from googleapiclient.discovery import build
+# from googleapiclient.errors import HttpError
+# from mail_classifier.nodes.read_mails.gmail_authenticate import authenticate
+# from mail_classifier.models import MessageRecord
+
+
+# def main():
+#   try:
+#     creds = authenticate()
+#     read_messages(datetime.datetime(2026,2, 28, 0, 0, 0), creds)
+#   except HttpError as error:
+#     print(f"An error occurred: {error}")
+
+
+# def read_messages(timestamp: datetime.datetime, creds) -> list[dict]:
+#   """Reads messages from Gmail after a certain timestamp."""
+#   try:
+#     # Call the Gmail API
+#     print("\n" + "="*50)
+#     print("Starting to fetch messages from Gmail...")
+#     print("="*50)
+#     service = build("gmail", "v1", credentials=creds)
+#     results = (
+#         service.users()
+#         .messages()
+#         .list(userId="me", q=f"after:{int(timestamp.timestamp())}")
+#         .execute()
+#     )
+#     raw_messages = results.get("messages", [])
+#     print(f"Found {len(raw_messages)} messages after {timestamp}.")
+
+#     for idx, message in enumerate(raw_messages, 1):
+#       print(f"\n--- Processing Message {idx}/{len(raw_messages)} ---")
+#       # print_message_details(message["id"], creds)
+#       messages = create_gmail_message_from_mail_message(message["id"], creds)
+#       print(messages)
+
+#     print("\n" + "="*50)
+#     print("Finished processing all messages")
+#     print("="*50 + "\n")
+#     return raw_messages
+#   except HttpError as error:
+#     print(f"An error occurred: {error}")
+#     return []
+  
+# def print_message_details(message_id: str, creds) -> None:
+#   """Prints the details of a message given its ID."""
+#   try:
+#     service = build("gmail", "v1", credentials=creds)
+#     message = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+#     print(f"  Full Message:")
+#     import json
+#     print(json.dumps(message, indent=2))
+#   except HttpError as error:
+#     print(f"  Error occurred: {error}")
+
+# def create_gmail_message_from_mail_message(message_id: str, creds) -> list[MessageRecord]:
+#   """Creates a Gmail message object from the raw API response."""
+#   messages = []
+#   service = build("gmail", "v1", credentials=creds)
+#   message = service.users().messages().get(userId="me", id=message_id, format="full").execute()
+  
+#   gmail_message = MessageRecord(
+#       id=message["id"],
+#       thread_id=message["threadId"],
+#       label_ids=message.get("labelIds", []),
+#       snippet=message.get("snippet", ""),
+#       time=datetime.datetime.fromtimestamp(int(message["internalDate"]) / 1000),
+#       subject=next((header["value"] for header in message["payload"]["headers"] if header["name"] == "Subject"), ""),
+#       sender=next((header["value"] for header in message["payload"]["headers"] if header["name"] == "From"), "")
+#   )
+#   messages.append(gmail_message)
+
+#   return messages
+
+# if __name__ == "__main__":
+#   main()
+
+
+# # python3 -m poetry run python src/mail_classifier/nodes/read_mails/read_mails.py
+
+
+import base64
 import datetime
+import logging
+from typing import List, Optional
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+
 from mail_classifier.nodes.read_mails.gmail_authenticate import authenticate
-from mail_classifier.nodes.read_mails.models import GmailMessage
+from mail_classifier.models import MessageRecord
+
+logger = logging.getLogger(__name__)
 
 
-def main():
-  try:
-    creds = authenticate()
-    read_messages(datetime.datetime(2026,2, 28, 0, 0, 0), creds)
-  except HttpError as error:
-    print(f"An error occurred: {error}")
+def read_messages(
+    timestamp: datetime.datetime,
+    creds,
+    max_messages: Optional[int] = None,
+) -> List[MessageRecord]:
+    """Reads and parses messages from Gmail after a given timestamp."""
 
-
-def read_messages(timestamp: datetime.datetime, creds) -> list[dict]:
-  """Reads messages from Gmail after a certain timestamp."""
-  try:
-    # Call the Gmail API
-    print("\n" + "="*50)
-    print("Starting to fetch messages from Gmail...")
-    print("="*50)
-    service = build("gmail", "v1", credentials=creds)
-    results = (
-        service.users()
-        .messages()
-        .list(userId="me", q=f"after:{int(timestamp.timestamp())}")
-        .execute()
+    logger.info(
+        "Building Gmail API service client for message fetch."
     )
-    raw_messages = results.get("messages", [])
-    print(f"Found {len(raw_messages)} messages after {timestamp}.")
+    service = build("gmail", "v1", credentials=creds)
+
+    # --- Pagination loop ---
+    raw_messages = []
+    page_token = None
+    page_num = 0
+
+    logger.info(
+        "Fetching message list from Gmail | since=%s | max_messages=%s",
+        timestamp.isoformat(),
+        max_messages if max_messages else "unlimited",
+    )
+
+    while True:
+        page_num += 1
+        kwargs = {
+            "userId": "me",
+            "q": f"after:{int(timestamp.timestamp())}",
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+        if max_messages:
+            kwargs["maxResults"] = min(max_messages - len(raw_messages), 500)
+
+        logger.info(
+            "Requesting page %d | query='%s' | pageToken=%s",
+            page_num,
+            kwargs["q"],
+            page_token or "none",
+        )
+
+        results = service.users().messages().list(**kwargs).execute()
+        page = results.get("messages", [])
+        raw_messages.extend(page)
+
+        logger.info(
+            "Page %d returned %d message(s) | running total=%d",
+            page_num,
+            len(page),
+            len(raw_messages),
+        )
+
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            logger.info("No nextPageToken — pagination complete.")
+            break
+        if max_messages and len(raw_messages) >= max_messages:
+            logger.info(
+                "Reached max_messages limit (%d) — stopping pagination.", max_messages
+            )
+            break
+
+    raw_messages = raw_messages[:max_messages] if max_messages else raw_messages
+
+    logger.info(
+        "Message list fetch complete | total_fetched=%d | pages=%d",
+        len(raw_messages),
+        page_num,
+    )
+
+    if not raw_messages:
+        logger.warning(
+            "No messages found after %s. "
+            "Check the timestamp or Gmail query filter.",
+            timestamp.isoformat(),
+        )
+        return []
+
+    # --- Parse each message ---
+    records: List[MessageRecord] = []
+    parse_errors = 0
 
     for idx, message in enumerate(raw_messages, 1):
-      print(f"\n--- Processing Message {idx}/{len(raw_messages)} ---")
-      # print_message_details(message["id"], creds)
-      messages = create_gmail_message_from_mail_message(message["id"], creds)
-      print(messages)
+        message_id = message["id"]
+        logger.info(
+            "Parsing message %d/%d | id=%s", idx, len(raw_messages), message_id
+        )
 
-    print("\n" + "="*50)
-    print("Finished processing all messages")
-    print("="*50 + "\n")
-    return raw_messages
-  except HttpError as error:
-    print(f"An error occurred: {error}")
-    return []
-  
-def print_message_details(message_id: str, creds) -> None:
-  """Prints the details of a message given its ID."""
-  try:
-    service = build("gmail", "v1", credentials=creds)
-    message = service.users().messages().get(userId="me", id=message_id, format="full").execute()
-    print(f"  Full Message:")
-    import json
-    print(json.dumps(message, indent=2))
-  except HttpError as error:
-    print(f"  Error occurred: {error}")
+        record = _parse_message(message_id, service)
 
-def create_gmail_message_from_mail_message(message_id: str, creds) -> list[GmailMessage]:
-  """Creates a Gmail message object from the raw API response."""
-  messages = []
-  service = build("gmail", "v1", credentials=creds)
-  message = service.users().messages().get(userId="me", id=message_id, format="full").execute()
-  
-  gmail_message = GmailMessage(
-      id=message["id"],
-      threadId=message["threadId"],
-      labelIds=message.get("labelIds", []),
-      snippet=message.get("snippet", ""),
-      time=datetime.datetime.fromtimestamp(int(message["internalDate"]) / 1000),
-      subject=next((header["value"] for header in message["payload"]["headers"] if header["name"] == "Subject"), ""),
-      sender=next((header["value"] for header in message["payload"]["headers"] if header["name"] == "From"), "")
-  )
-  messages.append(gmail_message)
+        if record:
+            records.append(record)
+            logger.info(
+                "Parsed OK | id=%s | subject='%s' | sender='%s' | time=%s | "
+                "body_present=%s | labels=%s",
+                record.id,
+                record.subject or "(no subject)",
+                record.sender or "(unknown sender)",
+                record.time.isoformat(),
+                record.body_text is not None,
+                record.label_ids,
+            )
+        else:
+            parse_errors += 1
+            logger.warning(
+                "Skipping message %d/%d | id=%s — failed to parse (see error above).",
+                idx,
+                len(raw_messages),
+                message_id,
+            )
 
-  return messages
+    logger.info(
+        "Parsing complete | parsed_ok=%d | parse_errors=%d | total=%d",
+        len(records),
+        parse_errors,
+        len(raw_messages),
+    )
+
+    return records
+
+
+def _parse_message(message_id: str, service) -> Optional[MessageRecord]:
+    """Fetches and parses a single Gmail message into a MessageRecord."""
+    try:
+        logger.info("Fetching full message payload | id=%s", message_id)
+        message = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+            .execute()
+        )
+
+        headers = message["payload"].get("headers", [])
+        subject = next((h["value"] for h in headers if h["name"] == "Subject"), "")
+        sender = next((h["value"] for h in headers if h["name"] == "From"), "")
+
+        body_text = _extract_body(message["payload"])
+        if body_text is None:
+            logger.info(
+                "No plain-text body found for message | id=%s | "
+                "mimeType=%s — classifier will rely on subject/snippet only.",
+                message_id,
+                message["payload"].get("mimeType", "unknown"),
+            )
+
+        return MessageRecord(
+            id=message["id"],
+            thread_id=message["threadId"],
+            label_ids=message.get("labelIds", []),
+            snippet=message.get("snippet", ""),
+            time=datetime.datetime.fromtimestamp(
+                int(message["internalDate"]) / 1000
+            ),
+            subject=subject,
+            sender=sender,
+            body_text=body_text,
+        )
+
+    except HttpError as error:
+        logger.error(
+            "Gmail API error while fetching message | id=%s | status=%s | reason=%s",
+            message_id,
+            error.resp.status,
+            error._get_reason(),
+        )
+        return None
+    except (KeyError, ValueError) as error:
+        logger.error(
+            "Failed to parse message payload | id=%s | error=%s",
+            message_id,
+            str(error),
+        )
+        return None
+
+
+def _extract_body(payload: dict) -> Optional[str]:
+    """Recursively extracts plain-text body from a Gmail message payload."""
+    # Single-part message — body is directly on the payload.
+    if "parts" not in payload:
+        data = payload.get("body", {}).get("data")
+        if data:
+            logger.info("Extracted body from single-part payload.")
+            return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        return None
+
+    # Multi-part message — walk parts looking for text/plain.
+    for part in payload["parts"]:
+        mime = part.get("mimeType", "")
+        if mime == "text/plain":
+            data = part.get("body", {}).get("data")
+            if data:
+                logger.info("Extracted body from multipart text/plain section.")
+                return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace")
+        # Recurse into nested multipart sections (e.g. multipart/alternative).
+        if "parts" in part:
+            logger.info("Recursing into nested '%s' part.", mime)
+            result = _extract_body(part)
+            if result:
+                return result
+
+    return None
+
 
 if __name__ == "__main__":
-  main()
-
-
-# python3 -m poetry run python src/mail_classifier/nodes/read_mails/read_mails.py
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    creds = authenticate()
+    records = read_messages(datetime.datetime(2026, 2, 28, 0, 0, 0), creds)
+    for r in records:
+        logger.info("Record: %s", r)
