@@ -1,12 +1,12 @@
 """Read-mails node for the LangGraph mail-classifier workflow."""
 
-import logging
+import structlog
 
 from mail_classifier.state import MailClassifierState
 from mail_classifier.nodes.read_mails.gmail_authenticate import authenticate
 from mail_classifier.nodes.read_mails.read_mails import read_messages
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def read_mails_node(state: MailClassifierState) -> dict:

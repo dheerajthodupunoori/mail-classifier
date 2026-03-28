@@ -1,6 +1,9 @@
 """LangGraph workflow graph for the mail-classifier pipeline."""
 
-import logging
+from dotenv import load_dotenv
+load_dotenv()
+
+import structlog
 
 from langgraph.graph import StateGraph, END
 
@@ -10,7 +13,7 @@ from mail_classifier.nodes.read_mails.node import read_mails_node
 from mail_classifier.nodes.classify_mail.node import classify_mails_node
 from mail_classifier.nodes.delete_mail.node import delete_mails_node
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +125,6 @@ def build_graph() -> StateGraph:
 
 if __name__ == "__main__":
     import datetime
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-    )
 
     config = WorkflowConfig(
         since_timestamp=datetime.datetime(2026, 2, 28, 0, 0, 0),

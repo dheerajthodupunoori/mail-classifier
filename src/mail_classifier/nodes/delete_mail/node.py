@@ -1,11 +1,10 @@
 """Delete-mails node — dummy implementation for workflow validation."""
 
-import logging
+import structlog
 
 from mail_classifier.state import MailClassifierState
 
-logger = logging.getLogger(__name__)
-
+logger = structlog.get_logger(__name__)
 
 def delete_mails_node(state: MailClassifierState) -> dict:
     """LangGraph node: deletes approved messages (dummy implementation).
