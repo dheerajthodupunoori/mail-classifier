@@ -128,7 +128,7 @@ if __name__ == "__main__":
 
     config = WorkflowConfig(
         since_timestamp=datetime.datetime(2026, 2, 28, 0, 0, 0),
-        allow_delete=False,   # Set True to test delete node routing
+        allow_delete=True,   # Set True to test delete node routing
         dry_run=True,
         max_messages=10,      # Keep small for testing
     )
